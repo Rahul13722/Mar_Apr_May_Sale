@@ -1,0 +1,380 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Buyer Map — Sorted, Category Filter, Families-based Non‑veg (52%)</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+    #map { height: 60vh; width: 100%; }
+    #panel { padding: 10px 12px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(220px,1fr)); gap: 10px; }
+    .legend { background: white; padding: 8px 12px; line-height: 1.4; border: 1px solid #ddd; border-radius: 6px; }
+    .legend .swatch { display: inline-block; width: 12px; height: 12px; margin-right: 6px; vertical-align: middle; }
+    table { border-collapse: collapse; width: 100%; margin-top: 10px; }
+    th, td { border: 1px solid #ddd; padding: 6px 8px; font-size: 13px; }
+    th { background: #f7f7f7; text-align: left; }
+    .small { font-size: 12px; color: #555; }
+    button { cursor: pointer; }
+    input[type=number], select { width: 100%; box-sizing: border-box; padding: 6px 8px; }
+    input[type=checkbox] { vertical-align: middle; }
+    .nowrap { white-space: nowrap; }
+    .num { text-align: right; }
+    .muted { color:#666; }
+    .selected { outline: 2px solid #2563eb; }
+  </style>
+</head>
+<body>
+<div id="map"></div>
+<div id="panel">
+  <div class="grid">
+    <div>
+      <b>Category filter</b>
+      <select id="categorySelect">
+        <option value="all" selected>All</option>
+        <option value="1">1</option>
+        <option value="2">2</option>
+        <option value="3">3</option>
+      </select>
+      <div class="small">Filter buyers by category and step through them.</div>
+    </div>
+
+    <div>
+      <b>Sort by</b>
+      <select id="sortSelect">
+        <option value="birds_desc" selected>Birds sold (High → Low)</option>
+        <option value="birds_asc">Birds sold (Low → High)</option>
+      </select>
+      <div class="small">Reorders the table and the list you step through.</div>
+    </div>
+
+    <div>
+      <b>Radius</b><br>
+      <span id="radiusLabel">10,000</span> m<br>
+      <input id="radiusInput" type="range" min="1000" max="15000" step="500" value="10000" />
+    </div>
+
+    <div>
+      <b>Worker %</b><br>
+      <label><input type="radio" name="wpr" value="census" checked> Census UP all-ages = 32.9%</label><br>
+      <label><input type="radio" name="wpr" value="plfs"> PLFS approx = 40.1%</label><br>
+      <input id="workerPct" type="number" value="32.9" min="0" max="100" step="0.1">
+    </div>
+
+    <div>
+      <b>Household size</b><br>
+      <input id="hhSize" type="number" value="4.8" min="1" max="15" step="0.1">
+      <div class="small">Families = Population ÷ household size</div>
+    </div>
+
+    <div>
+      <b>Non‑veg families</b><br>
+      <input id="nonvegPct" type="number" value="52" min="52" max="52" step="0.1" disabled>
+      <div class="small">Fixed: Non‑veg families = <b>0.52 × Families</b></div>
+    </div>
+
+    <div>
+      <b>Actions</b><br>
+      <button id="computePop">1) Compute population</button>
+      <button id="computeMetrics">2) Compute families & non‑veg</button><br>
+      <button id="prevBtn">◀ Prev</button>
+      <button id="nextBtn">Next ▶</button><br>
+      <button id="exportBtn">Export CSV</button>
+    </div>
+  </div>
+
+  <div id="missing" class="small muted" style="margin-top:6px;"></div>
+  <div id="methodNote" class="small muted">Workers shown for reference only. Non‑veg families uses total families × 0.52.</div>
+
+  <div id="tableWrap"></div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+  const raw = [{"Buyer_ID": "FAT_KHA_BAK_ABDUL", "Market_Geo": "", "Birds": 3, "Category": 3}, {"Buyer_ID": "FAT_KHA_BAK_BIRENDRNISHAD", "Market_Geo": "26.0978661 80.4658518 0.0 2299.999", "Birds": 17, "Category": 2}, {"Buyer_ID": "FAT_KHA_BIN_MOHANIF", "Market_Geo": "26.0351645 80.5743825 82.0999984741211 135.6", "Birds": 6, "Category": 3}, {"Buyer_ID": "FAT_KHA_BIN_MOZAID", "Market_Geo": "26.0353133 80.5746548 42.400000000000006 4.65", "Birds": 6, "Category": 3}, {"Buyer_ID": "FAT_KHA_BIN_RAJU", "Market_Geo": "26.0416731 80.5780879 0.0 1799.999", "Birds": 7, "Category": 3}, {"Buyer_ID": "FAT_KHA_CHH_RAJESH", "Market_Geo": "26.0125734 80.5680866 51.199999999999996 3.1", "Birds": 5, "Category": 3}, {"Buyer_ID": "FAT_KHA_DHA_ASLAM", "Market_Geo": "25.9149507 80.3243581 36.6 4.566", "Birds": 60, "Category": 1}, {"Buyer_ID": "FAT_KHA_DIV_SANDEEP", "Market_Geo": "25.934205 80.7148733 52.5 3.2", "Birds": 8, "Category": 3}, {"Buyer_ID": "FAT_KHA_FAR_PAPPU", "Market_Geo": "25.9314374 80.6117033 0.0 2599.999", "Birds": 2, "Category": 3}, {"Buyer_ID": "FAT_KHA_FAR_SALMANKURAISHI", "Market_Geo": "25.9209278 80.6189891 0.0 2900.0", "Birds": 6, "Category": 3}, {"Buyer_ID": "FAT_KHA_FAT_KALIM", "Market_Geo": "25.95287 80.4192483 62.8 2.7", "Birds": 70, "Category": 1}, {"Buyer_ID": "FAT_KHA_GAD_SHAHID", "Market_Geo": "25.9436146 80.4957376 0.0 2700.0", "Birds": 30, "Category": 1}, {"Buyer_ID": "FAT_KHA_GAU_MAHMOODPRADHAN", "Market_Geo": "26.0061407 80.2974574 0.0 2599.999", "Birds": 15, "Category": 2}, {"Buyer_ID": "FAT_KHA_GAU_MAHMUDPRADHAN", "Market_Geo": "25.9466975 80.3110389 0.0 3299.999", "Birds": 56, "Category": 1}, {"Buyer_ID": "FAT_KHA_JAF_IRFAN", "Market_Geo": "", "Birds": 8, "Category": 3}, {"Buyer_ID": "FAT_KHA_JAF_MOBINAHMAD", "Market_Geo": "25.9150427 80.5009491 0.0 1799.999", "Birds": 22, "Category": 2}, {"Buyer_ID": "FAT_KHA_JAH_RAHISH", "Market_Geo": "", "Birds": 3, "Category": 3}, {"Buyer_ID": "FAT_KHA_JAH_SAIHBAN", "Market_Geo": "26.1048283 80.362471 84.5 72.9", "Birds": 34, "Category": 1}, {"Buyer_ID": "FAT_KHA_JON_FAKRUDDIN+KHAN", "Market_Geo": "", "Birds": 3, "Category": 3}, {"Buyer_ID": "FAT_KHA_KAB_VAHABBHAI", "Market_Geo": "25.9238165 80.8146589 76.5999984741211 6.8", "Birds": 18, "Category": 2}, {"Buyer_ID": "FAT_KHA_MAU_AYAN", "Market_Geo": "25.950953 80.4185686 0.0 1299.999", "Birds": 21, "Category": 1}, {"Buyer_ID": "FAT_KHA_NEY_JAVED", "Market_Geo": "26.022527 80.3726504 0.0 2799.999", "Birds": 7, "Category": 3}, {"Buyer_ID": "FAT_KHA_ROT_ASHIKBHAI", "Market_Geo": "26.0315427 80.4157543 0.0 36.9", "Birds": 12, "Category": 2}, {"Buyer_ID": "FAT_KHA_ROT_MOASHIK", "Market_Geo": "26.0312856 80.4167027 0.0 157.8", "Birds": 12, "Category": 2}, {"Buyer_ID": "FAT_KHA_SAH_MAKSUD", "Market_Geo": "25.9327354 80.6203376 0.0 128.899", "Birds": 13, "Category": 2}, {"Buyer_ID": "FAT_KHA_SAT_LALMOHAMMAD", "Market_Geo": "", "Birds": 24, "Category": 1}, {"Buyer_ID": "FAT_KHA_SAT_PURAN", "Market_Geo": "25.9714519 80.3700847 52.199999999999996 8.75", "Birds": 5, "Category": 3}, {"Buyer_ID": "FAT_KHA_TEJ_SARVESH", "Market_Geo": "", "Birds": 10, "Category": 3}];
+
+  // Parse points with lat/lng
+  const allPoints = [];
+  const missing = [];
+  raw.forEach(b => {
+    const geo = (b.Market_Geo || '').trim();
+    const toks = geo.split(/\s+/).filter(Boolean);
+    if (toks.length >= 2) {
+      const lat = parseFloat(toks[0]);
+      const lng = parseFloat(toks[1]);
+      if (!isNaN(lat) && !isNaN(lng)) {
+        allPoints.push({ id: b.Buyer_ID, lat, lng, cat: parseInt(b.Category||1,10), birds: parseInt(b.Birds||0,10) });
+        return;
+      }
+    }
+    missing.push(b);
+  });
+
+  const missEl = document.getElementById('missing');
+  missEl.textContent = missing.length ? ('Missing coordinates for: ' + missing.map(m => m.Buyer_ID).join(', ')) : '';
+
+  const colorMap = {1: 'red', 2: 'blue', 3: 'green'};
+  const map = L.map('map').setView([26.02, 80.51], 9);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '&copy; OpenStreetMap contributors'
+  }).addTo(map);
+  const group = L.featureGroup().addTo(map);
+
+  let radiusMeters = 10000;
+  const radiusInput = document.getElementById('radiusInput');
+  const radiusLabel = document.getElementById('radiusLabel');
+  radiusLabel.textContent = radiusMeters.toLocaleString();
+  radiusInput.addEventListener('input', () => {
+    radiusMeters = parseInt(radiusInput.value, 10);
+    radiusLabel.textContent = radiusMeters.toLocaleString();
+    refresh();
+  });
+
+  const categorySelect = document.getElementById('categorySelect');
+  const sortSelect = document.getElementById('sortSelect');
+  categorySelect.addEventListener('change', refresh);
+  sortSelect.addEventListener('change', refresh);
+
+  const workerRadios = document.getElementsByName('wpr');
+  const workerPct = document.getElementById('workerPct');
+  const hhSize = document.getElementById('hhSize');
+
+  function syncWorkerPctToMethod() {
+    let method = 'census';
+    for (const r of workerRadios) if (r.checked) method = r.value;
+    if (method === 'census') workerPct.value = 32.9;
+    else if (method === 'plfs') workerPct.value = (58.2 * 0.69).toFixed(1); // ~40.1
+  }
+  workerRadios.forEach(r => r.addEventListener('change', syncWorkerPctToMethod));
+  syncWorkerPctToMethod();
+
+  const computePopBtn = document.getElementById('computePop');
+  const computeMetricsBtn = document.getElementById('computeMetrics');
+  const exportBtn = document.getElementById('exportBtn');
+  const prevBtn = document.getElementById('prevBtn');
+  const nextBtn = document.getElementById('nextBtn');
+
+  let layers = [];          // current filtered+sorted layers
+  let currentIdx = -1;      // index for stepping
+
+  function getFilteredSorted() {
+    const cat = categorySelect.value;
+    let pts = allPoints.slice();
+    if (cat !== 'all') {
+      const c = parseInt(cat, 10);
+      pts = pts.filter(p => p.cat === c);
+    }
+    // Sort
+    const mode = sortSelect.value;
+    pts.sort((a,b) => {
+      if (mode === 'birds_asc') return (a.birds||0) - (b.birds||0);
+      return (b.birds||0) - (a.birds||0);
+    });
+    return pts;
+  }
+
+  function drawAll() {
+    group.clearLayers();
+    layers = [];
+    const pts = getFilteredSorted();
+    pts.forEach(p => {
+      const color = colorMap[p.cat] || 'gray';
+      const marker = L.circleMarker([p.lat, p.lng], { radius: 6, color, fillColor: color, fillOpacity: 0.9 }).addTo(group);
+      const circle = L.circle([p.lat, p.lng], { radius: radiusMeters, color, fillColor: color, fillOpacity: 0.08, weight: 1 }).addTo(group);
+      marker.bindPopup(`<b>${p.id}</b><br>Category: ${p.cat}<br>Birds sold: <b>${p.birds.toLocaleString()}</b><br>Radius: ${(radiusMeters/1000).toFixed(1)} km`);
+      layers.push({ id: p.id, lat: p.lat, lng: p.lng, cat: p.cat, birds: p.birds, marker, circle, pop: null, workers: null, families: null, nonveg: null });
+    });
+    if (layers.length) map.fitBounds(group.getBounds(), { padding: [20,20] });
+    renderTable();
+    currentIdx = layers.length ? 0 : -1;
+    focusRow(currentIdx);
+  }
+
+  function renderTable() {
+    const wrap = document.getElementById('tableWrap');
+    let html = '<table><thead><tr><th>#</th><th>Buyer ID</th><th>Cat</th><th class="num">Birds</th><th class="num">Pop (2020)</th><th class="num">Workers</th><th class="num">Families</th><th class="num">Non‑veg families (52% of families)</th></tr></thead><tbody>';
+    layers.forEach((l, idx) => {
+      html += `<tr data-id="${l.id}">
+        <td>${idx+1}</td>
+        <td>${l.id}</td>
+        <td>${l.cat}</td>
+        <td class="num">${l.birds.toLocaleString()}</td>
+        <td class="num popCell">–</td>
+        <td class="num workersCell">–</td>
+        <td class="num famCell">–</td>
+        <td class="num nonvegCell">–</td>
+      </tr>`;
+    });
+    html += '</tbody></table>';
+    wrap.innerHTML = html;
+
+    // Row click to focus on map
+    document.querySelectorAll('#tableWrap tbody tr').forEach((tr, i) => {
+      tr.addEventListener('click', () => { focusRow(i, true); });
+    });
+  }
+
+  function focusRow(i, pan=false) {
+    document.querySelectorAll('#tableWrap tbody tr').forEach(tr => tr.classList.remove('selected'));
+    if (i>=0 && i<layers.length) {
+      const l = layers[i];
+      const tr = document.querySelector(`#tableWrap tbody tr[data-id="${l.id}"]`);
+      if (tr) tr.classList.add('selected');
+      l.marker.openPopup();
+      if (pan) map.panTo([l.lat, l.lng]);
+      currentIdx = i;
+    }
+  }
+
+  prevBtn.addEventListener('click', () => {
+    if (!layers.length) return;
+    const i = (currentIdx <= 0) ? layers.length-1 : currentIdx-1;
+    focusRow(i, true);
+  });
+  nextBtn.addEventListener('click', () => {
+    if (!layers.length) return;
+    const i = (currentIdx >= layers.length-1) ? 0 : currentIdx+1;
+    focusRow(i, true);
+  });
+
+  function circlePolygon(lon, lat, radiusMeters, steps=64) {
+    const coords = [];
+    const R = 6371000;
+    const lat1 = lat * Math.PI/180;
+    const lon1 = lon * Math.PI/180;
+    const d = radiusMeters / R;
+    for (let i=0; i<=steps; i++) {
+      const brng = (i/steps)*2*Math.PI;
+      const lat2 = Math.asin(Math.sin(lat1)*Math.cos(d) + Math.cos(lat1)*Math.sin(d)*Math.cos(brng));
+      const lon2 = lon1 + Math.atan2(Math.sin(brng)*Math.sin(d)*Math.cos(lat1), Math.cos(d)-Math.sin(lat1)*Math.sin(lat2));
+      coords.push([ (lon2*180/Math.PI), (lat2*180/Math.PI) ]);
+    }
+    return {
+      "type":"FeatureCollection",
+      "features":[{
+        "type":"Feature",
+        "properties":{},
+        "geometry":{"type":"Polygon","coordinates":[coords]}
+      }]
+    };
+  }
+
+  async function getPopulationForGeoJSON(geojson, year=2020) {
+    const base = 'https://api.worldpop.org/v1/services/stats';
+    const params = new URLSearchParams({
+      dataset: 'wpgppop',
+      year: String(year),
+      geojson: JSON.stringify(geojson),
+      runasync: 'false'
+    });
+    const url = base + '?' + params.toString();
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const j = await res.json();
+    if (j && j.data && typeof j.data.total_population !== 'undefined') {
+      return j.data.total_population;
+    } else {
+      throw new Error('No total_population in response');
+    }
+  }
+
+  function refresh() {
+    drawAll();
+  }
+
+  // Compute buttons
+  computePopBtn.addEventListener('click', async () => {
+    computePopBtn.disabled = true;
+    computePopBtn.textContent = 'Computing…';
+    for (const l of layers) {
+      try {
+        const gj = circlePolygon(l.lng, l.lat, radiusMeters, 64);
+        const pop = await getPopulationForGeoJSON(gj, 2020);
+        l.pop = pop;
+        const tr = document.querySelector(`#tableWrap tbody tr[data-id="${l.id}"]`);
+        if (tr) tr.querySelector('.popCell').textContent = Math.round(pop).toLocaleString();
+      } catch (e) {
+        const tr = document.querySelector(`#tableWrap tbody tr[data-id="${l.id}"]`);
+        if (tr) tr.querySelector('.popCell').textContent = '';
+      }
+      await new Promise(r => setTimeout(r, 150));
+    }
+    computePopBtn.disabled = false;
+    computePopBtn.textContent = '1) Compute population';
+  });
+
+  function getWorkerPct() {
+    return parseFloat(workerPct.value || '32.9');
+  }
+  function getHH() { return parseFloat(hhSize.value || '4.8'); }
+
+  computeMetricsBtn.addEventListener('click', () => {
+    const hh = getHH();
+    layers.forEach(l => {
+      const pop = l.pop || 0;
+      const workers = pop * (getWorkerPct()/100);
+      const families = hh > 0 ? (pop / hh) : 0;
+      const nonveg = 0.52 * families;  // fixed 52%
+
+      l.workers = workers;
+      l.families = families;
+      l.nonveg = nonveg;
+
+      const tr = document.querySelector(`#tableWrap tbody tr[data-id="${l.id}"]`);
+      if (tr) {
+        tr.querySelector('.workersCell').textContent = Math.round(workers).toLocaleString();
+        tr.querySelector('.famCell').textContent = Math.round(families).toLocaleString();
+        tr.querySelector('.nonvegCell').textContent = Math.round(nonveg).toLocaleString();
+      }
+    });
+  });
+
+  exportBtn.addEventListener('click', () => {
+    const header = ['Buyer_ID','Category','Latitude','Longitude','Radius_m','Birds_Sold',
+                    'Population_2020','Workers','Families','Nonveg_Families','Worker_pct','HH_Size','NV_pct_Fixed'];
+    const lines = [header.join(',')];
+    layers.forEach(l => {
+      lines.push([l.id, l.cat, l.lat, l.lng, radiusMeters, l.birds,
+                  (l.pop!=null && !isNaN(l.pop))?Math.round(l.pop):'',
+                  (l.workers!=null && !isNaN(l.workers))?Math.round(l.workers):'',
+                  (l.families!=null && !isNaN(l.families))?Math.round(l.families):'',
+                  (l.nonveg!=null && !isNaN(l.nonveg))?Math.round(l.nonveg):'',
+                  getWorkerPct(), getHH(), 52
+                ].join(','));
+    });
+    const blob = new Blob([lines.join('\n')], {type:'text/csv;charset=utf-8;'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'buyer_map_sorted_filtered_families_nonveg_fixed52.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  });
+
+  // Legend
+  const legend = L.control({position: 'bottomleft'});
+  legend.onAdd = function () {
+    const div = L.DomUtil.create('div', 'legend');
+    div.innerHTML = `
+      <div><span class="swatch" style="background:red"></span>Category 1</div>
+      <div><span class="swatch" style="background:blue"></span>Category 2</div>
+      <div><span class="swatch" style="background:green"></span>Category 3</div>
+      <div style="margin-top:6px;" class="small">
+        Non‑veg families = 0.52 × Families (fixed). Families = Population ÷ HH size.
+      </div>
+    `;
+    return div;
+  };
+  legend.addTo(map);
+
+  // First draw
+  drawAll();
+
+</script>
+</body>
+</html>
